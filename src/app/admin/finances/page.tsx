@@ -9,6 +9,7 @@ import {
 import { supabase } from "@/lib/supabase";
 
 const COLORS = ["#3b82f6", "#f59e0b", "#8b5cf6", "#10b981", "#f97316", "#ef4444"];
+const TIER_RATES: Record<string, number> = { Silver: 50, Gold: 90, Platinum: 150 };
 
 type RevenueRow = { month: string; memberships: number; one_off: number; retail: number; total: number };
 type ExpenseRow = { month: string; labor: number; utilities: number; maintenance: number; software: number; lease: number; equipment: number; total: number };
@@ -24,16 +25,26 @@ export default function FinancesPage() {
 
   const [expForm, setExpForm] = useState({ labor: 0, utilities: 0, maintenance: 0, software: 0, lease: 0, equipment: 0 });
   const [revForm, setRevForm] = useState({ memberships: 0, one_off: 0, retail: 0 });
+  const [autoMemberships, setAutoMemberships] = useState(0);
 
   const loadData = async () => {
-    const [{ data: rev }, { data: exp }] = await Promise.all([
+    const [{ data: rev }, { data: exp }, { data: members }] = await Promise.all([
       supabase.from("revenue_entries").select("*").order("created_at"),
       supabase.from("expense_entries").select("*").order("created_at"),
+      supabase.from("members").select("tier"),
     ]);
+
+    // Auto-calculate membership revenue from real member data
+    if (members) {
+      const calc = members.reduce((sum, m) => sum + (TIER_RATES[m.tier] ?? 0), 0);
+      setAutoMemberships(calc);
+      setRevForm((prev) => ({ ...prev, memberships: calc }));
+    }
+
     if (rev) {
       setRevenue(rev);
       const cur = rev.find((r) => r.month === currentMonth);
-      if (cur) setRevForm({ memberships: cur.memberships, one_off: cur.one_off, retail: cur.retail });
+      if (cur) setRevForm({ memberships: members ? members.reduce((sum, m) => sum + (TIER_RATES[m.tier] ?? 0), 0) : cur.memberships, one_off: cur.one_off, retail: cur.retail });
     }
     if (exp) {
       setExpenses(exp);
@@ -59,8 +70,9 @@ export default function FinancesPage() {
   const saveRevenue = async () => {
     setSaving(true);
     setSaveMsg(null);
-    const total = revForm.memberships + revForm.one_off + revForm.retail;
-    await supabase.from("revenue_entries").upsert({ month: currentMonth, ...revForm, total }, { onConflict: "month" });
+    const memberships = autoMemberships;
+    const total = memberships + revForm.one_off + revForm.retail;
+    await supabase.from("revenue_entries").upsert({ month: currentMonth, memberships, one_off: revForm.one_off, retail: revForm.retail, total }, { onConflict: "month" });
     await loadData();
     setSaving(false);
     setSaveMsg("Revenue saved!");
@@ -161,7 +173,20 @@ export default function FinancesPage() {
               <TrendingUp className="h-5 w-5 text-green-400" />
             </div>
             <div className="grid grid-cols-2 gap-3 mb-4">
-              {(["memberships", "one_off", "retail"] as const).map((field) => (
+              {/* Memberships — auto-calculated, read-only */}
+              <div className="col-span-2">
+                <label className="text-gray-400 text-xs mb-1 flex items-center gap-2">
+                  Memberships
+                  <span className="bg-blue-500/20 text-blue-400 text-xs px-1.5 py-0.5 rounded">auto</span>
+                </label>
+                <div className="flex items-center bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2">
+                  <span className="text-gray-500 text-sm mr-1">$</span>
+                  <span className="text-white text-sm font-semibold">{autoMemberships.toLocaleString()}</span>
+                  <span className="text-gray-500 text-xs ml-auto">calculated from {Object.keys(TIER_RATES).join(" / ")} tiers</span>
+                </div>
+              </div>
+              {/* One-off and Retail — manual */}
+              {(["one_off", "retail"] as const).map((field) => (
                 <div key={field}>
                   <label className="text-gray-400 text-xs capitalize mb-1 block">{field.replace("_", " ")}</label>
                   <div className="flex items-center bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 focus-within:border-blue-500">
@@ -178,7 +203,7 @@ export default function FinancesPage() {
               ))}
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-gray-400 text-sm">Total: <span className="text-green-400 font-bold">${(revForm.memberships + revForm.one_off + revForm.retail).toLocaleString()}</span></span>
+              <span className="text-gray-400 text-sm">Total: <span className="text-green-400 font-bold">${(autoMemberships + revForm.one_off + revForm.retail).toLocaleString()}</span></span>
               <button onClick={saveRevenue} disabled={saving}
                 className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors">
                 {saving ? "Saving…" : "Save Revenue"}
