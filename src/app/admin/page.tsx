@@ -28,8 +28,8 @@ type Member = {
 
 export default function AdminPage() {
   const [todayBookings, setTodayBookings] = useState<Booking[]>([]);
-  const [revenue, setRevenue] = useState({ total: 14080, expenses: 6140 });
-  const [memberCount, setMemberCount] = useState(91);
+  const [revenue, setRevenue] = useState({ total: 0, expenses: 0 });
+  const [memberCount, setMemberCount] = useState(0);
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -38,14 +38,18 @@ export default function AdminPage() {
       // Get today's date in the format stored in DB e.g. "Mar 5, 2026"
       const today = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
-      const [{ data: bookings }, { data: rev }, { data: memberRows }] = await Promise.all([
+      const [{ data: bookings }, { data: rev }, { data: exp }, { data: memberRows }] = await Promise.all([
         supabase.from("bookings").select("*").eq("date", today).eq("status", "confirmed").order("time"),
         supabase.from("revenue_entries").select("total").order("created_at", { ascending: false }).limit(1),
+        supabase.from("expense_entries").select("total").order("created_at", { ascending: false }).limit(1),
         supabase.from("members").select("id, name, email, tier, credits_total, credits_used, member_since").order("member_since", { ascending: false }),
       ]);
 
       if (bookings) setTodayBookings(bookings);
-      if (rev?.[0]) setRevenue((prev) => ({ ...prev, total: rev[0].total }));
+      setRevenue({
+        total: rev?.[0]?.total ?? 0,
+        expenses: exp?.[0]?.total ?? 0,
+      });
       if (memberRows) { setMemberCount(memberRows.length); setMembers(memberRows); }
       setLoading(false);
     };
@@ -61,7 +65,7 @@ export default function AdminPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const netProfit = revenue.total - 6140;
+  const netProfit = revenue.total - revenue.expenses;
 
   // Build membership mix from real members data
   const tierCounts = members.reduce<Record<string, number>>((acc, m) => {
@@ -96,7 +100,7 @@ export default function AdminPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
           {[
             { label: "Monthly Revenue", value: `$${revenue.total.toLocaleString()}`, sub: "+10.5% vs last month", color: "text-green-400", icon: DollarSign },
-            { label: "Monthly Expenses", value: "$6,140", sub: "Labor, utilities, software", color: "text-red-400", icon: TrendingUp },
+            { label: "Monthly Expenses", value: `$${revenue.expenses.toLocaleString()}`, sub: "Labor, utilities, software", color: "text-red-400", icon: TrendingUp },
             { label: "Net Profit", value: `$${netProfit.toLocaleString()}`, sub: `${((netProfit / revenue.total) * 100).toFixed(0)}% margin`, color: "text-blue-400", icon: DollarSign },
             { label: "Active Members", value: memberCount.toString(), sub: "Registered accounts", color: "text-purple-400", icon: Users },
           ].map((k) => (

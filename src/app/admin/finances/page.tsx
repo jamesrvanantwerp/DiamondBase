@@ -13,23 +13,59 @@ const COLORS = ["#3b82f6", "#f59e0b", "#8b5cf6", "#10b981", "#f97316", "#ef4444"
 type RevenueRow = { month: string; memberships: number; one_off: number; retail: number; total: number };
 type ExpenseRow = { month: string; labor: number; utilities: number; maintenance: number; software: number; total: number };
 
+const currentMonth = new Date().toLocaleDateString("en-US", { month: "short", year: "numeric" });
+
 export default function FinancesPage() {
   const [revenue, setRevenue] = useState<RevenueRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetch = async () => {
-      const [{ data: rev }, { data: exp }] = await Promise.all([
-        supabase.from("revenue_entries").select("*").order("created_at"),
-        supabase.from("expense_entries").select("*").order("created_at"),
-      ]);
-      if (rev) setRevenue(rev);
-      if (exp) setExpenses(exp);
-      setLoading(false);
-    };
-    fetch();
-  }, []);
+  const [expForm, setExpForm] = useState({ labor: 0, utilities: 0, maintenance: 0, software: 0 });
+  const [revForm, setRevForm] = useState({ memberships: 0, one_off: 0, retail: 0 });
+
+  const loadData = async () => {
+    const [{ data: rev }, { data: exp }] = await Promise.all([
+      supabase.from("revenue_entries").select("*").order("created_at"),
+      supabase.from("expense_entries").select("*").order("created_at"),
+    ]);
+    if (rev) {
+      setRevenue(rev);
+      const cur = rev.find((r) => r.month === currentMonth);
+      if (cur) setRevForm({ memberships: cur.memberships, one_off: cur.one_off, retail: cur.retail });
+    }
+    if (exp) {
+      setExpenses(exp);
+      const cur = exp.find((e) => e.month === currentMonth);
+      if (cur) setExpForm({ labor: cur.labor, utilities: cur.utilities, maintenance: cur.maintenance, software: cur.software });
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { loadData(); }, []);
+
+  const saveExpenses = async () => {
+    setSaving(true);
+    setSaveMsg(null);
+    const total = expForm.labor + expForm.utilities + expForm.maintenance + expForm.software;
+    await supabase.from("expense_entries").upsert({ month: currentMonth, ...expForm, total }, { onConflict: "month" });
+    await loadData();
+    setSaving(false);
+    setSaveMsg("Expenses saved!");
+    setTimeout(() => setSaveMsg(null), 3000);
+  };
+
+  const saveRevenue = async () => {
+    setSaving(true);
+    setSaveMsg(null);
+    const total = revForm.memberships + revForm.one_off + revForm.retail;
+    await supabase.from("revenue_entries").upsert({ month: currentMonth, ...revForm, total }, { onConflict: "month" });
+    await loadData();
+    setSaving(false);
+    setSaveMsg("Revenue saved!");
+    setTimeout(() => setSaveMsg(null), 3000);
+  };
 
   if (loading) return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -75,6 +111,85 @@ export default function FinancesPage() {
           <h1 className="text-3xl font-bold text-white">Financial Dashboard</h1>
         </div>
         <p className="text-gray-400 mb-8 ml-8">Live data from Supabase · Sep 2025 – Mar 2026</p>
+
+        {/* Entry Forms */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          {/* Expense Entry */}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-white font-bold">Log Expenses</h2>
+                <p className="text-gray-500 text-xs mt-0.5">{currentMonth} · updates charts below</p>
+              </div>
+              <TrendingDown className="h-5 w-5 text-red-400" />
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              {(["labor", "utilities", "maintenance", "software"] as const).map((field) => (
+                <div key={field}>
+                  <label className="text-gray-400 text-xs capitalize mb-1 block">{field}</label>
+                  <div className="flex items-center bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 focus-within:border-blue-500">
+                    <span className="text-gray-500 text-sm mr-1">$</span>
+                    <input
+                      type="number" min={0}
+                      value={expForm[field] || ""}
+                      onChange={(e) => setExpForm((p) => ({ ...p, [field]: Number(e.target.value) || 0 }))}
+                      className="bg-transparent text-white text-sm w-full outline-none"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400 text-sm">Total: <span className="text-red-400 font-bold">${(expForm.labor + expForm.utilities + expForm.maintenance + expForm.software).toLocaleString()}</span></span>
+              <button onClick={saveExpenses} disabled={saving}
+                className="bg-red-600 hover:bg-red-500 disabled:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors">
+                {saving ? "Saving…" : "Save Expenses"}
+              </button>
+            </div>
+          </div>
+
+          {/* Revenue Entry */}
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-white font-bold">Log Revenue</h2>
+                <p className="text-gray-500 text-xs mt-0.5">{currentMonth} · updates charts below</p>
+              </div>
+              <TrendingUp className="h-5 w-5 text-green-400" />
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              {(["memberships", "one_off", "retail"] as const).map((field) => (
+                <div key={field}>
+                  <label className="text-gray-400 text-xs capitalize mb-1 block">{field.replace("_", " ")}</label>
+                  <div className="flex items-center bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 focus-within:border-blue-500">
+                    <span className="text-gray-500 text-sm mr-1">$</span>
+                    <input
+                      type="number" min={0}
+                      value={revForm[field] || ""}
+                      onChange={(e) => setRevForm((p) => ({ ...p, [field]: Number(e.target.value) || 0 }))}
+                      className="bg-transparent text-white text-sm w-full outline-none"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-400 text-sm">Total: <span className="text-green-400 font-bold">${(revForm.memberships + revForm.one_off + revForm.retail).toLocaleString()}</span></span>
+              <button onClick={saveRevenue} disabled={saving}
+                className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors">
+                {saving ? "Saving…" : "Save Revenue"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {saveMsg && (
+          <div className="mb-6 bg-green-950/30 border border-green-500/30 rounded-xl px-4 py-3 text-green-300 text-sm">
+            {saveMsg}
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
